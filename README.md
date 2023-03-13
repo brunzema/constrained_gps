@@ -8,7 +8,7 @@ The main features of this algorithm are:
 - suitable for multiple constraints (not implemented yet)
 - fast sampling when combining it with [Botev (2016)](https://arxiv.org/pdf/1603.04166.pdf) as implementent [here](https://github.com/brunzema/truncated-mvn-sampler).
 
-Feel free to use this code, but don't forget to cite [Agrell (2019)](https://arxiv.org/pdf/1901.03134.pdf)!
+Feel free to use this code, but don't forget to cite [Agrell (2019)](https://arxiv.org/pdf/1901.03134.pdf)! Also, if you are interested, check out our paper ["On controller tuning using time-varying Bayesian optimization" (CDC 2022)](https://ieeexplore.ieee.org/document/9992649) and the corresponding [repo](https://github.com/brunzema/uitvbo) where we build on the code the increase the sample efficiency of controller tuning in a time-varying environment by enforcing convexity constraints on the spatial dimension.
 
 ## Main difference to the orignal Python implementation
 The Python implementation provided here uses the efficient pipeline of GPyTorch in contrast to the NumPy implemenation by the author of the algorithm.
