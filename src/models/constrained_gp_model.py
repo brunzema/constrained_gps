@@ -25,6 +25,7 @@ class ConstrainedGPAgrell(ExactGP, GPyTorchModel):
                  train_x: Tensor,
                  train_y: Tensor,
                  constrained_dims: List[int],
+                 unconstrained_dims: List[int],
                  lengthscale_constraint=None,
                  lengthscale_hyperprior=None,
                  noise_constraint=None,
@@ -50,24 +51,37 @@ class ConstrainedGPAgrell(ExactGP, GPyTorchModel):
 
         # track constrained dimensions
         self.constr_dims = constrained_dims
+        self.unconstr_dims = unconstrained_dims
         self.spatio_dims = train_x.shape[1]
 
-        # split kernel into spatiotemporal kernel K = K_s * K_t
+        # split kernel into spatio kernel and constrained spatio kernel K = K_c * K_s
+        self.constrained_kernel = RBFKernelForConvexityConstraints(
+            constrained_dims=self.constr_dims,
+            ard_num_dims=len(self.constr_dims),
+            active_dims=tuple(self.constr_dims),
+            lengthscale_prior=lengthscale_hyperprior,
+            lengthscale_constraint=lengthscale_constraint)
+
+        self.unconstrained_kernel = gpytorch.kernels.RBFKernel(
+            ard_num_dims=len(self.unconstr_dims),
+            active_dims=tuple(self.unconstr_dims),
+            lengthscale_prior=lengthscale_hyperprior,
+            lengthscale_constraint=lengthscale_constraint)
+
         self.spatio_kernel = gpytorch.kernels.ScaleKernel(
-            RBFKernelForConvexityConstraints(constrained_dims=constrained_dims,
-                                             ard_num_dims=self.spatio_dims,
-                                             active_dims=range(self.spatio_dims),
-                                             lengthscale_prior=lengthscale_hyperprior,
-                                             lengthscale_constraint=lengthscale_constraint),
+            self.constrained_kernel,
             outpurtscale_prior=outputscale_hyperprior,
             outputscale_constraint=outputscale_constraint)
 
         # Initialize lengthscale and outputscale to mean of priors.
-        if lengthscale_hyperprior is not None:
-            self.spatio_kernel.base_kernel.lengthscale = lengthscale_hyperprior.mean
-        if outputscale_hyperprior is not None:
-            self.spatio_kernel.outputscale = outputscale_hyperprior.mean
-        self.covar_module = self.spatio_kernel
+        # if lengthscale_hyperprior is not None:
+        #     self.spatio_kernel.base_kernel.lengthscale = lengthscale_hyperprior.mean
+        # if outputscale_hyperprior is not None:
+        #     self.spatio_kernel.outputscale = outputscale_hyperprior.mean
+        if not self.unconstr_dims:
+            self.covar_module = self.spatio_kernel
+        else:
+            self.covar_module = self.spatio_kernel * self.unconstrained_kernel
 
         # Initialize mean
         self.mean_module = ConstantMean()
@@ -667,4 +681,3 @@ class ConstrainedGPAgrell(ExactGP, GPyTorchModel):
     #         # return weighted sum
     #         return prob, time_sampled, time_calculated, time_calc_prob
     #
-
