@@ -52,7 +52,6 @@ class ConstrainedGPAgrell(ExactGP, GPyTorchModel):
         # track constrained dimensions
         self.constr_dims = constrained_dims
         self.unconstr_dims = unconstrained_dims
-        self.spatio_dims = train_x.shape[1]
 
         # split kernel into spatio kernel and constrained spatio kernel K = K_c * K_s
         self.constrained_kernel = RBFKernelForConvexityConstraints(
@@ -74,13 +73,19 @@ class ConstrainedGPAgrell(ExactGP, GPyTorchModel):
             outputscale_constraint=outputscale_constraint)
 
         # Initialize lengthscale and outputscale to mean of priors.
-        # if lengthscale_hyperprior is not None:
-        #     self.spatio_kernel.base_kernel.lengthscale = lengthscale_hyperprior.mean
-        # if outputscale_hyperprior is not None:
-        #     self.spatio_kernel.outputscale = outputscale_hyperprior.mean
         if not self.unconstr_dims:
+            if lengthscale_hyperprior is not None:
+                self.spatio_kernel.base_kernel.lengthscale = lengthscale_hyperprior.mean
+            if outputscale_hyperprior is not None:
+                self.spatio_kernel.outputscale = outputscale_hyperprior.mean
+
             self.covar_module = self.spatio_kernel
         else:
+            if lengthscale_hyperprior is not None:
+                self.spatio_kernel.base_kernel.lengthscale = lengthscale_hyperprior.mean
+                self.unconstrained_kernel.lengthscale = lengthscale_hyperprior.mean
+            if outputscale_hyperprior is not None:
+                self.spatio_kernel.outputscale = outputscale_hyperprior.mean
             self.covar_module = self.spatio_kernel * self.unconstrained_kernel
 
         # Initialize mean
@@ -106,7 +111,7 @@ class ConstrainedGPAgrell(ExactGP, GPyTorchModel):
         self.VOPs = False
 
         self.location_noise = 1e-6  # numerical stability -> lowering the probability of hard constraints
-        self.bounds = [0, np.inf]  # numpy since sampling algorithm needs numpy bounds
+        self.bounds = [0, 4]  # numpy since sampling algorithm needs numpy bounds
         self.prev_trunc_samples = prev_trunc_samples
         self.prev_post_samples = None
         self.posterior_distribution = None
@@ -259,7 +264,7 @@ class ConstrainedGPAgrell(ExactGP, GPyTorchModel):
 
     def get_factors(self):
         if not isinstance(self.L, Tensor):
-            self.L = psd_safe_cholesky(self.covar_train_train_noisy, max_tries=5)
+            self.L = psd_safe_cholesky(self.covar_train_train_noisy, max_tries=6)
         L = self.L
 
         if not isinstance(self.v1, Tensor):
@@ -277,7 +282,7 @@ class ConstrainedGPAgrell(ExactGP, GPyTorchModel):
         B1 = self.B1
 
         if not isinstance(self.L1, Tensor):
-            self.L1 = psd_safe_cholesky(B1, max_tries=5)
+            self.L1 = psd_safe_cholesky(B1, max_tries=6)
         L1 = self.L1
 
         return L, v1, A1, B1, L1
@@ -296,6 +301,11 @@ class ConstrainedGPAgrell(ExactGP, GPyTorchModel):
         if not isinstance(self.covar_train_ddxv, Tensor):
             covar_train_ddxv = self.spatio_kernel.base_kernel.construct_k_x1_ddx2(
                 training_inputs_nobatch, virtual_obs_points_nobatch)
+            if self.unconstr_dims:
+                tmpr_covar_train_ddxv = self.unconstrained_kernel(training_inputs_nobatch,
+                                                             virtual_obs_points_nobatch).evaluate()
+                tmpr_covar_train_ddxv = torch.tile(tmpr_covar_train_ddxv, (1, len(self.constr_dims)))
+                covar_train_ddxv = covar_train_ddxv * tmpr_covar_train_ddxv
             self.covar_train_ddxv = covar_train_ddxv * spatio_scale
         else:
             covar_train_ddxv = self.covar_train_ddxv
@@ -305,6 +315,12 @@ class ConstrainedGPAgrell(ExactGP, GPyTorchModel):
         if not isinstance(self.covar_ddxv_ddxv, Tensor):
             covar_ddxv_ddxv = self.spatio_kernel.base_kernel.construct_k_ddx1_ddx2(
                 virtual_obs_points_nobatch, virtual_obs_points_nobatch)
+            if self.unconstr_dims:
+                tmpr_covar_ddxv_ddxv = self.unconstrained_kernel(virtual_obs_points_nobatch,
+                                                            virtual_obs_points_nobatch).evaluate()
+                tmpr_covar_ddxv_ddxv = torch.tile(tmpr_covar_ddxv_ddxv,
+                                                  (len(self.constr_dims), len(self.constr_dims)))
+                covar_ddxv_ddxv = covar_ddxv_ddxv * tmpr_covar_ddxv_ddxv
             self.covar_ddxv_ddxv = covar_ddxv_ddxv * spatio_scale
         else:
             covar_ddxv_ddxv = self.covar_ddxv_ddxv
@@ -312,6 +328,13 @@ class ConstrainedGPAgrell(ExactGP, GPyTorchModel):
 
         # covar(X_*, X_v)
         covar_test_ddxv = self.spatio_kernel.base_kernel.construct_k_x1_ddx2(X, virtual_obs_points)
+        if self.unconstr_dims:
+            tmpr_covar_test_ddxv = self.unconstrained_kernel(X, virtual_obs_points).evaluate()
+            if batch_mode:
+                tmpr_covar_test_ddxv = torch.tile(tmpr_covar_test_ddxv, (1, 1, len(self.constr_dims)))
+            else:
+                tmpr_covar_test_ddxv = torch.tile(tmpr_covar_test_ddxv, (1, len(self.constr_dims)))
+            covar_test_ddxv = covar_test_ddxv * tmpr_covar_test_ddxv
         covar_test_ddxv = covar_test_ddxv * spatio_scale
 
         return covar_train_ddxv, covar_ddxv_ddxv, covar_test_ddxv
